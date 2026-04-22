@@ -1,0 +1,176 @@
+#include "crow_all.h"
+#include <unordered_map>
+#include <string>
+#include <ctime>
+
+// -------------------- MOCK DATABASE --------------------
+struct User {
+    std::string username;
+    std::string password;
+};
+
+struct Payment {
+    std::string id;
+    std::string user;
+    double amount;
+    std::string status;
+};
+
+std::unordered_map<std::string, User> users;
+std::unordered_map<std::string, Payment> payments;
+
+// -------------------- UTILS --------------------
+std::string generate_id() {
+    return std::to_string(std::time(nullptr)) + std::to_string(rand() % 1000);
+}
+
+// Fake token generator
+std::string generate_token(const std::string& username) {
+    return "token_" + username;
+}
+
+// -------------------- MAIN --------------------
+int main() {
+    crow::App<crow::CORSHandler> app;
+
+    // Enable CORS
+    auto& cors = app.get_middleware<crow::CORSHandler>();
+    cors.global()
+        .headers("Content-Type")
+        .methods("POST"_method, "GET"_method, "OPTIONS"_method)
+        .origin("*");
+
+    // -------------------- ROOT --------------------
+    CROW_ROUTE(app, "/")([](){
+        return "🚀 Northwire C++ Backend Running";
+    });
+
+    // -------------------- REGISTER --------------------
+    CROW_ROUTE(app, "/api/register").methods("POST"_method)
+    ([](const crow::request& req){
+        auto body = crow::json::load(req.body);
+
+        if (!body || !body.has("username") || !body.has("password")) {
+            return crow::response(400, "Invalid request");
+        }
+
+        std::string username = body["username"].s();
+        std::string password = body["password"].s();
+
+        if (users.find(username) != users.end()) {
+            return crow::response(400, "User already exists");
+        }
+
+        users[username] = {username, password};
+
+        return crow::response(200, "User registered successfully");
+    });
+
+    // -------------------- LOGIN --------------------
+    CROW_ROUTE(app, "/api/login").methods("POST"_method)
+    ([](const crow::request& req){
+        auto body = crow::json::load(req.body);
+
+        if (!body) return crow::response(400, "Invalid JSON");
+
+        std::string username = body["username"].s();
+        std::string password = body["password"].s();
+
+        if (users.find(username) == users.end() ||
+            users[username].password != password) {
+            return crow::response(401, "Invalid credentials");
+        }
+
+        crow::json::wvalue res;
+        res["token"] = generate_token(username);
+
+        return crow::response(200, res);
+    });
+
+    // -------------------- CREATE PAYMENT --------------------
+    CROW_ROUTE(app, "/api/payment").methods("POST"_method)
+    ([](const crow::request& req){
+        auto body = crow::json::load(req.body);
+
+        if (!body || !body.has("user") || !body.has("amount")) {
+            return crow::response(400, "Invalid request");
+        }
+
+        std::string user = body["user"].s();
+        double amount = body["amount"].d();
+
+        std::string payment_id = generate_id();
+
+        payments[payment_id] = {
+            payment_id,
+            user,
+            amount,
+            "processing"
+        };
+
+        crow::json::wvalue res;
+        res["payment_id"] = payment_id;
+        res["status"] = "processing";
+
+        return crow::response(200, res);
+    });
+
+    // -------------------- GET PAYMENT --------------------
+    CROW_ROUTE(app, "/api/payment/<string>")
+    ([](std::string id){
+        if (payments.find(id) == payments.end()) {
+            return crow::response(404, "Payment not found");
+        }
+
+        auto& p = payments[id];
+
+        crow::json::wvalue res;
+        res["id"] = p.id;
+        res["user"] = p.user;
+        res["amount"] = p.amount;
+        res["status"] = p.status;
+
+        return crow::response(200, res);
+    });
+
+    // -------------------- UPDATE PAYMENT --------------------
+    CROW_ROUTE(app, "/api/payment/<string>/complete").methods("POST"_method)
+    ([](std::string id){
+        if (payments.find(id) == payments.end()) {
+            return crow::response(404, "Payment not found");
+        }
+
+        payments[id].status = "completed";
+
+        return crow::response(200, "Payment completed");
+    });
+
+    // -------------------- LIST PAYMENTS --------------------
+    CROW_ROUTE(app, "/api/payments")
+    ([](){
+        crow::json::wvalue res;
+
+        int i = 0;
+        for (auto& [id, p] : payments) {
+            res[i]["id"] = p.id;
+            res[i]["user"] = p.user;
+            res[i]["amount"] = p.amount;
+            res[i]["status"] = p.status;
+            i++;
+        }
+
+        return crow::response(200, res);
+    });
+
+    // -------------------- DELETE PAYMENT --------------------
+    CROW_ROUTE(app, "/api/payment/<string>").methods("DELETE"_method)
+    ([](std::string id){
+        if (payments.erase(id)) {
+            return crow::response(200, "Deleted successfully");
+        }
+        return crow::response(404, "Payment not found");
+    });
+
+    // -------------------- RUN SERVER --------------------
+    app.port(8080).multithreaded().run();
+}
